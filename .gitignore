@@ -1,0 +1,36 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Model / training artifacts
+training_output/
+merged_dataset/
+*.keras
+*.h5
+*.weights
+*.onnx
+*.tflite
+
+# Local data / images
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.webp
+*.jfif
+*.tif
+*.tiff
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
