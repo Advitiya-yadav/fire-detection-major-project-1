@@ -12,7 +12,6 @@ venv/
 .ipynb_checkpoints/
 
 # Model / training artifacts
-training_output/
 merged_dataset/
 *.keras
 *.h5
