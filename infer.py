@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 
+from huggingface_hub import hf_hub_download
 import tensorflow as tf
 
 from data_pipeline import CLASS_NAMES, NUM_CLASSES
@@ -11,6 +12,8 @@ from prediction import MIN_CONFIDENCE_THRESHOLD, predict_probabilities, preproce
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL = PROJECT_DIR / "training_output" / "best_model.keras"
+MODEL_REPO_ID = "advitiya21/fire-detection-model"
+MODEL_FILENAME = "best_model.keras"
 
 
 def _load_model(model_path: Path):
@@ -36,11 +39,19 @@ def _load_model(model_path: Path):
 
 def predict_image(
     image_path: Path,
-    model_path: Path = DEFAULT_MODEL,
+    model_path: Path | None = None,
     min_confidence: float = MIN_CONFIDENCE_THRESHOLD,
 ) -> None:
     if not image_path.is_file():
         raise FileNotFoundError(f"Image file not found: {image_path}")
+    if model_path is None:
+        model_path = Path(
+            hf_hub_download(
+                repo_id=MODEL_REPO_ID,
+                filename=MODEL_FILENAME,
+                local_dir=DEFAULT_MODEL.parent,
+            )
+        )
     if not model_path.exists():
         raise FileNotFoundError(
             f"Trained model not found: {model_path}. Run train.py first."
@@ -88,8 +99,11 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=Path,
-        default=DEFAULT_MODEL,
-        help=f"Trained Keras model (default: {DEFAULT_MODEL}).",
+        default=None,
+        help=(
+            "Local Keras model path. By default, downloads the model from "
+            f"Hugging Face ({MODEL_REPO_ID}/{MODEL_FILENAME})."
+        ),
     )
     parser.add_argument(
         "--min-confidence",

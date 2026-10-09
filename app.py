@@ -1,12 +1,11 @@
 """Streamlit interface for classifying fire, nonfire, and smoke images."""
 
 from pathlib import Path
-
+from huggingface_hub import hf_hub_download
 import streamlit as st
 import tensorflow as tf
 
 from data_pipeline import CLASS_NAMES, NUM_CLASSES
-from model import build_hff_model
 from prediction import (
     MIN_CONFIDENCE_THRESHOLD,
     predict_probabilities,
@@ -14,45 +13,30 @@ from prediction import (
 )
 
 PROJECT_DIR = Path(__file__).resolve().parent
-MODEL_PATH = PROJECT_DIR / "training_output" / "best_model.keras"
-
-
-def _load_model_file(model_path: Path):
-    candidates = [model_path]
-    if model_path.suffix.lower() == ".keras":
-        candidates.append(model_path.with_suffix(".weights.h5"))
-
-    last_error = None
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        try:
-            return tf.keras.models.load_model(candidate, compile=False, safe_mode=False)
-        except Exception as exc:  # pragma: no cover - fallback to weights path below
-            last_error = exc
-
-    if not last_error:
-        raise FileNotFoundError(
-            f"Trained model not found at {model_path}. Run train.py first."
-        )
-    raise last_error
+MODEL_REPO_ID = "advitiya21/fire-detection-model"
+MODEL_FILENAME = "best_model.keras"
+MODEL_CACHE_DIR = PROJECT_DIR / "training_output"
 
 
 @st.cache_resource
 def load_model():
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"Trained model not found at {MODEL_PATH}. Run train.py first."
-        )
-
     try:
-        model = _load_model_file(MODEL_PATH)
-    except Exception:
-        weights_path = MODEL_PATH.with_suffix(".weights.h5")
-        if not weights_path.is_file():
-            raise
-        model, _ = build_hff_model()
-        model.load_weights(weights_path)
+        model_path = hf_hub_download(
+            repo_id=MODEL_REPO_ID,
+            filename=MODEL_FILENAME,
+            local_dir=MODEL_CACHE_DIR,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not download '{MODEL_FILENAME}' from Hugging Face repo "
+            f"'{MODEL_REPO_ID}'. Check your internet connection and that the "
+            "repository is public or correctly authenticated."
+        ) from exc
+
+    model = tf.keras.models.load_model(
+        model_path,
+        compile=False,
+    )
 
     if model.output_shape[-1] != NUM_CLASSES:
         raise ValueError(
@@ -87,6 +71,9 @@ def main():
         probabilities = predict_probabilities(model, image)[0]
     except (OSError, tf.errors.OpError, ValueError, ImportError) as exc:
         st.error(f"Could not classify this image: {exc}")
+        return
+    except RuntimeError as exc:
+        st.error(str(exc))
         return
 
     ranked_predictions = sorted(
