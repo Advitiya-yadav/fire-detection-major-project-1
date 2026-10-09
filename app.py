@@ -63,20 +63,18 @@ def load_model():
 
 
 def main():
-    st.set_page_config(page_title="Fire Detection Classifier", page_icon="🔥")
-    st.title("Fire & Smoke Image Classifier")
-    st.write(
-        "Upload an image and the trained model will classify it as **fire**, "
-        "**nonfire**, or **smoke**."
-    )
+    st.set_page_config(page_title="Major Project", page_icon="")
+    st.title("🔥 UAV FIRE IMAGE CLASSIFIER")
+    st.write("Upload an aerial image to check whether it contains fire, smoke, or neither.")
 
     uploaded_file = st.file_uploader(
         "Choose an image",
         type=["jpg", "jpeg", "png", "bmp", "gif", "webp"],
         help="The uploaded image is processed locally by the model.",
     )
+
     if uploaded_file is None:
-        st.info("Choose an image to get started.")
+        st.info("Upload an image to get started.")
         return
 
     st.image(uploaded_file, caption=uploaded_file.name, use_container_width=True)
@@ -97,6 +95,7 @@ def main():
         reverse=True,
     )
     predicted_class, confidence = ranked_predictions[0]
+
     if confidence < MIN_CONFIDENCE_THRESHOLD:
         st.warning(
             f"Uncertain result: the top guess is **{predicted_class}** "
@@ -108,9 +107,11 @@ def main():
             f"Prediction: **{predicted_class}** "
             f"({float(confidence):.1%} confidence)"
         )
+
     st.subheader("Class scores")
     for class_name, score in ranked_predictions:
         st.progress(float(score), text=f"{class_name}: {float(score):.1%}")
+
     st.caption(
         "Confidence is the model's score for this image, not a guarantee or "
         "the model's overall accuracy. The review threshold is not calibrated "
