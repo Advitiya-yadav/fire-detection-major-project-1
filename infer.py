@@ -8,7 +8,15 @@ import tensorflow as tf
 
 from data_pipeline import CLASS_NAMES, NUM_CLASSES
 from model import build_hff_model
-from prediction import MIN_CONFIDENCE_THRESHOLD, predict_probabilities, preprocess_image
+from prediction import (
+    DEFAULT_FIRE_THRESHOLD,
+    FIRE_THRESHOLD_FILENAME,
+    MIN_CONFIDENCE_THRESHOLD,
+    download_fire_threshold,
+    load_fire_threshold,
+    predict_probabilities,
+    preprocess_image,
+)
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL = PROJECT_DIR / "training_output" / "best_model.keras"
@@ -44,14 +52,22 @@ def predict_image(
 ) -> None:
     if not image_path.is_file():
         raise FileNotFoundError(f"Image file not found: {image_path}")
+    downloaded_model = False
     if model_path is None:
-        model_path = Path(
-            hf_hub_download(
-                repo_id=MODEL_REPO_ID,
-                filename=MODEL_FILENAME,
-                local_dir=DEFAULT_MODEL.parent,
+        model_path = DEFAULT_MODEL
+        if not model_path.is_file():
+            model_path = Path(
+                hf_hub_download(
+                    repo_id=MODEL_REPO_ID,
+                    filename=MODEL_FILENAME,
+                    local_dir=DEFAULT_MODEL.parent,
+                )
             )
-        )
+            downloaded_model = True
+    if downloaded_model and not (
+        DEFAULT_MODEL.parent / FIRE_THRESHOLD_FILENAME
+    ).is_file():
+        download_fire_threshold(MODEL_REPO_ID, DEFAULT_MODEL.parent)
     if not model_path.exists():
         raise FileNotFoundError(
             f"Trained model not found: {model_path}. Run train.py first."
@@ -74,6 +90,7 @@ def predict_image(
 
     image = preprocess_image(tf.io.read_file(str(image_path)))
     probabilities = predict_probabilities(model, image)[0]
+    fire_threshold, calibrated = load_fire_threshold(model_path.parent)
 
     ranked_predictions = sorted(
         zip(CLASS_NAMES, probabilities),
@@ -81,7 +98,12 @@ def predict_image(
         reverse=True,
     )
     predicted_class, confidence = ranked_predictions[0]
-    if confidence < min_confidence:
+    if predicted_class == "fire" and confidence < fire_threshold:
+        print(
+            f"Uncertain: top guess is fire ({float(confidence):.1%}), "
+            f"below the fire decision threshold ({fire_threshold:.1%})."
+        )
+    elif confidence < min_confidence:
         print(
             f"Uncertain: top guess is {predicted_class} "
             f"({float(confidence):.1%}; threshold {min_confidence:.1%})."
@@ -91,6 +113,11 @@ def predict_image(
     print("Class scores:")
     for class_name, score in ranked_predictions:
         print(f"  {class_name}: {float(score):.1%}")
+    if not calibrated:
+        print(
+            f"Warning: no calibration file found; using fallback fire "
+            f"threshold {DEFAULT_FIRE_THRESHOLD:.0%}."
+        )
 
 
 def main() -> None:
@@ -101,8 +128,8 @@ def main() -> None:
         type=Path,
         default=None,
         help=(
-            "Local Keras model path. By default, downloads the model from "
-            f"Hugging Face ({MODEL_REPO_ID}/{MODEL_FILENAME})."
+            "Local Keras model path. By default, uses the local trained model "
+            f"or downloads from Hugging Face ({MODEL_REPO_ID}/{MODEL_FILENAME})."
         ),
     )
     parser.add_argument(

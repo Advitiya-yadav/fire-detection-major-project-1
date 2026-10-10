@@ -7,7 +7,11 @@ import tensorflow as tf
 
 from data_pipeline import CLASS_NAMES, NUM_CLASSES
 from prediction import (
+    DEFAULT_FIRE_THRESHOLD,
+    FIRE_THRESHOLD_FILENAME,
     MIN_CONFIDENCE_THRESHOLD,
+    download_fire_threshold,
+    load_fire_threshold,
     predict_probabilities,
     preprocess_image,
 )
@@ -20,18 +24,29 @@ MODEL_CACHE_DIR = PROJECT_DIR / "training_output"
 
 @st.cache_resource
 def load_model():
-    try:
-        model_path = hf_hub_download(
-            repo_id=MODEL_REPO_ID,
-            filename=MODEL_FILENAME,
-            local_dir=MODEL_CACHE_DIR,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            f"Could not download '{MODEL_FILENAME}' from Hugging Face repo "
-            f"'{MODEL_REPO_ID}'. Check your internet connection and that the "
-            "repository is public or correctly authenticated."
-        ) from exc
+    model_path = MODEL_CACHE_DIR / MODEL_FILENAME
+    downloaded_model = False
+    if not model_path.is_file():
+        try:
+            model_path = Path(
+                hf_hub_download(
+                    repo_id=MODEL_REPO_ID,
+                    filename=MODEL_FILENAME,
+                    local_dir=MODEL_CACHE_DIR,
+                )
+            )
+            downloaded_model = True
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not download '{MODEL_FILENAME}' from Hugging Face repo "
+                f"'{MODEL_REPO_ID}'. Check your internet connection and that the "
+                "repository is public or correctly authenticated."
+            ) from exc
+
+    if downloaded_model and not (
+        MODEL_CACHE_DIR / FIRE_THRESHOLD_FILENAME
+    ).is_file():
+        download_fire_threshold(MODEL_REPO_ID, MODEL_CACHE_DIR)
 
     model = tf.keras.models.load_model(
         model_path,
@@ -43,7 +58,8 @@ def load_model():
             f"The model outputs {model.output_shape[-1]} classes, but the app "
             f"expects {NUM_CLASSES}: {', '.join(CLASS_NAMES)}."
         )
-    return model
+    fire_threshold, calibrated = load_fire_threshold(MODEL_CACHE_DIR)
+    return model, fire_threshold, calibrated
 
 
 def main():
@@ -66,7 +82,7 @@ def main():
         return
 
     try:
-        model = load_model()
+        model, fire_threshold, calibrated = load_model()
         image = preprocess_image(uploaded_file.getvalue())
         probabilities = predict_probabilities(model, image)[0]
     except (OSError, tf.errors.OpError, ValueError, ImportError) as exc:
@@ -83,7 +99,13 @@ def main():
     )
     predicted_class, confidence = ranked_predictions[0]
 
-    if confidence < MIN_CONFIDENCE_THRESHOLD:
+    if predicted_class == "fire" and confidence < fire_threshold:
+        st.warning(
+            f"Uncertain result: the top guess is **fire** "
+            f"({float(confidence):.1%}), below the fire decision threshold "
+            f"({fire_threshold:.1%})."
+        )
+    elif confidence < MIN_CONFIDENCE_THRESHOLD:
         st.warning(
             f"Uncertain result: the top guess is **{predicted_class}** "
             f"({float(confidence):.1%}; review threshold "
@@ -100,9 +122,14 @@ def main():
         st.progress(float(score), text=f"{class_name}: {float(score):.1%}")
 
     st.caption(
-        "Confidence is the model's score for this image, not a guarantee or "
-        "the model's overall accuracy. The review threshold is not calibrated "
-        "and is not a safety guarantee."
+        (
+            f"Fire threshold calibrated to validation data: {fire_threshold:.1%}. "
+            if calibrated
+            else f"No calibration file found; using fallback fire threshold "
+            f"{DEFAULT_FIRE_THRESHOLD:.0%}. "
+        )
+        + "Scores are not guarantees. Validation false-positive rates do not "
+        "guarantee performance on new images or make this a safety system."
     )
 
 
