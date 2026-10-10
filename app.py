@@ -7,7 +7,6 @@ import tensorflow as tf
 
 from data_pipeline import CLASS_NAMES, NUM_CLASSES
 from prediction import (
-    DEFAULT_FIRE_THRESHOLD,
     FIRE_THRESHOLD_FILENAME,
     MIN_CONFIDENCE_THRESHOLD,
     download_fire_threshold,
@@ -20,6 +19,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 MODEL_REPO_ID = "advitiya21/fire-detection-model"
 MODEL_FILENAME = "best_model.keras"
 MODEL_CACHE_DIR = PROJECT_DIR / "training_output"
+DEFAULT_FIRE_THRESHOLD = 0.80
 
 
 @st.cache_resource
