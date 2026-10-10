@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 from huggingface_hub import hf_hub_download
-from huggingface_hub.errors import EntryNotFoundError
+from huggingface_hub.utils import EntryNotFoundError
 
 from data_pipeline import CLASS_NAMES, IMG_SIZE
 
