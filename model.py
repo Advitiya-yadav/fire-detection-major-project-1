@@ -1,18 +1,11 @@
-"""
-Paper-aligned HFF fire detection model.
-
-This keeps the project architecture aligned with the reference paper:
-  1. DFF: EfficientNetB2 backbone (ImageNet pretrained)
-  2. FGA: fire-guided attention with multiscale context
-  3. HFF: hierarchical feature fusion combining localized and contextual cues
-"""
+"""Binary fire-detection model following the provided DFF/FGA/HFF workflow."""
 
 import tensorflow as tf
 from tensorflow.keras import Model, layers
 from tensorflow.keras.applications import EfficientNetB2
 
 IMG_SIZE = (224, 224, 3)
-NUM_CLASSES = 3
+NUM_CLASSES = 2
 
 
 def build_dff_backbone(input_shape=IMG_SIZE, freeze=True):
@@ -26,22 +19,8 @@ def build_dff_backbone(input_shape=IMG_SIZE, freeze=True):
     return backbone
 
 
-def _global_descriptor(x, filters=64, kernel_size=1, name=None):
-    x = layers.Conv2D(filters, kernel_size, padding="same", activation="relu", name=name)(x)
-    x = layers.GlobalAveragePooling2D()(x)
-    return layers.BatchNormalization()(x)
-
-
 def fire_guided_attention(fm, name="fga"):
-    """
-    Fire-Guided Attention (FGA) module.
-
-    This follows the paper's design closely:
-    - 1x1 bottleneck reduction to prevent parameter explosion
-    - multiscale receptive fields (7x7, 5x5, 3x3)
-    - per-branch descriptors using global pooling and batchnorm
-    - context fusion with the original feature map
-    """
+    """Fuse multiscale 7x7, 5x5, and 3x3 fire-attention feature maps."""
     fm_reduced = layers.Conv2D(
         256,
         1,
@@ -50,78 +29,68 @@ def fire_guided_attention(fm, name="fga"):
         name=f"{name}_reduce",
     )(fm)
     fm_reduced = layers.BatchNormalization(name=f"{name}_bn")(fm_reduced)
-    fm_reduced = layers.Dropout(0.25, name=f"{name}_drop")(fm_reduced)
 
     branch7 = layers.Conv2D(128, 7, padding="same", activation="relu", name=f"{name}_conv7")(fm_reduced)
     branch5 = layers.Conv2D(128, 5, padding="same", activation="relu", name=f"{name}_conv5")(fm_reduced)
     branch3 = layers.Conv2D(128, 3, padding="same", activation="relu", name=f"{name}_conv3")(fm_reduced)
-
-    g1 = _global_descriptor(branch7, filters=64, kernel_size=1, name=f"{name}_g1")
-    g2 = _global_descriptor(branch5, filters=64, kernel_size=1, name=f"{name}_g2")
-    g3 = _global_descriptor(branch3, filters=64, kernel_size=1, name=f"{name}_g3")
-    multiscale = layers.Concatenate(name=f"{name}_multiscale")([g1, g2, g3])
-
-    local_context = layers.GlobalAveragePooling2D()(
-        layers.Conv2D(64, 1, padding="same", activation="relu", name=f"{name}_local_ctx")(fm)
+    multiscale = layers.Concatenate(name=f"{name}_multiscale")(
+        [branch7, branch5, branch3]
     )
-    global_context = layers.GlobalAveragePooling2D(name=f"{name}_global_ctx")(fm)
+    attention = layers.Conv2D(
+        384,
+        1,
+        padding="same",
+        activation="sigmoid",
+        name=f"{name}_attention",
+    )(multiscale)
+    attended = layers.Multiply(name=f"{name}_apply_attention")(
+        [multiscale, attention]
+    )
+    return layers.Conv2D(
+        256, 1, padding="same", activation="relu", name=f"{name}_out"
+    )(attended)
 
-    return layers.Concatenate(name=f"{name}_out")([multiscale, local_context, global_context])
+
+def hierarchical_feature_fusion(fga_features, direct_features, name="hff"):
+    """Hierarchically concatenate attended FGA and direct DFF feature maps."""
+    fga_features = layers.Conv2D(
+        128, 1, padding="same", activation="relu", name=f"{name}_fga_projection"
+    )(fga_features)
+    direct_features = layers.Conv2D(
+        128, 1, padding="same", activation="relu", name=f"{name}_direct_projection"
+    )(direct_features)
+    level1 = layers.Concatenate(name=f"{name}_level1")(
+        [fga_features, direct_features]
+    )
+    level2 = layers.Conv2D(
+        128, 3, padding="same", activation="relu", name=f"{name}_level2"
+    )(level1)
+    level3 = layers.Concatenate(name=f"{name}_level3")([level1, level2])
+    return layers.Conv2D(
+        256, 1, padding="same", activation="relu", name=f"{name}_out"
+    )(level3)
 
 
-def hierarchical_feature_fusion(fm, name="hff"):
-    """
-    Hierarchical Feature Fusion (HFF) module.
+def build_hff_model(input_shape=IMG_SIZE, num_classes=NUM_CLASSES, freeze_backbone=True):
+    """Build DFF with parallel FGA/direct paths, merged by HFF."""
+    inputs = layers.Input(shape=input_shape, name="input_tensor")
+    backbone = build_dff_backbone(input_shape=input_shape, freeze=freeze_backbone)
+    dff_features = backbone(inputs)
 
-    The paper's HFF mechanism combines multiple multiscale and hierarchical feature maps
-    while preserving local structure and high-level semantic cues.
-    """
-    fm_reduced = layers.Conv2D(
+    fga_features = fire_guided_attention(dff_features, name="fga")
+    direct_features = layers.Conv2D(
         256,
         1,
         padding="same",
         activation="relu",
-        name=f"{name}_reduce",
-    )(fm)
-
-    f7 = layers.Conv2D(128, 7, padding="same", activation="relu", name=f"{name}_f7")(fm_reduced)
-    f5 = layers.Conv2D(96, 5, padding="same", activation="relu", name=f"{name}_f5")(f7)
-    f3 = layers.Conv2D(96, 3, padding="same", activation="relu", name=f"{name}_f3")(f7)
-
-    d1 = _global_descriptor(f7, filters=64, kernel_size=1, name=f"{name}_d1")
-    d2 = _global_descriptor(f5, filters=64, kernel_size=1, name=f"{name}_d2")
-    d3 = _global_descriptor(f3, filters=64, kernel_size=1, name=f"{name}_d3")
-
-    # Hierarchical concatenation in the same spirit as the paper: progressively combine
-    # higher-level semantic branches with spatially aware feature maps.
-    h1 = layers.Concatenate(name=f"{name}_h1")([d1, d2])
-    h2 = layers.Concatenate(name=f"{name}_h2")([h1, d3])
-
-    context = layers.GlobalAveragePooling2D()(
-        layers.Conv2D(64, 1, padding="same", activation="relu", name=f"{name}_context")(fm)
+        name="direct_branch",
+    )(dff_features)
+    fused = hierarchical_feature_fusion(
+        fga_features, direct_features, name="hff"
     )
-    return layers.Concatenate(name=f"{name}_out")([h2, context])
 
-
-def build_hff_model(input_shape=IMG_SIZE, num_classes=NUM_CLASSES, freeze_backbone=True):
-    """
-    DFF -> FGA -> HFF pipeline used by the paper.
-
-    1) DFF: EfficientNetB2 feature extractor
-    2) FGA: fire-guided attention
-    3) HFF: hierarchical feature fusion
-    """
-    inputs = layers.Input(shape=input_shape, name="input_tensor")
-    backbone = build_dff_backbone(input_shape=input_shape, freeze=freeze_backbone)
-    fm = backbone(inputs)
-
-    fga_out = fire_guided_attention(fm, name="fga")
-    hff_out = hierarchical_feature_fusion(fm, name="hff")
-
-    fused = layers.Concatenate(name="dff_fga_hff_fusion")([fga_out, hff_out])
-    fused = layers.BatchNormalization()(fused)
-    fused = layers.Dense(256, activation="relu")(fused)
-    fused = layers.Dropout(0.4)(fused)
+    fused = layers.BatchNormalization(name="classifier_bn")(fused)
+    fused = layers.GlobalAveragePooling2D(name="classifier_pool")(fused)
     outputs = layers.Dense(
         num_classes,
         activation="softmax",
@@ -134,7 +103,7 @@ def build_hff_model(input_shape=IMG_SIZE, num_classes=NUM_CLASSES, freeze_backbo
 
 
 def build_paper_model(input_shape=IMG_SIZE, num_classes=NUM_CLASSES, freeze_backbone=True):
-    """Explicit paper-aligned alias for the DFF -> FGA -> HFF architecture."""
+    """Build the binary DFF, parallel FGA/direct, HFF architecture."""
     return build_hff_model(
         input_shape=input_shape,
         num_classes=num_classes,

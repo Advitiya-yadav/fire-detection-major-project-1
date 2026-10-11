@@ -1,4 +1,4 @@
-"""Streamlit interface for classifying fire, nonfire, and smoke images."""
+"""Streamlit interface for classifying fire and nonfire images."""
 
 from pathlib import Path
 from huggingface_hub import hf_hub_download
@@ -65,7 +65,7 @@ def load_model():
 def main():
     st.set_page_config(page_title="Major Project", page_icon="")
     st.title("🔥 UAV FIRE IMAGE CLASSIFIER")
-    st.write("Upload an aerial image to check whether it contains fire, smoke, or neither.")
+    st.write("Upload an aerial image to classify it as fire or nonfire.")
 
     uploaded_file = st.file_uploader(
         "Choose an image",

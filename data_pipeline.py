@@ -11,8 +11,8 @@ BATCH_SIZE = 32
 AUTOTUNE = tf.data.AUTOTUNE
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 
-# Fixed class order -- index 0/1/2 maps to the model's softmax head
-CLASS_NAMES = ["nonfire", "fire", "smoke"]
+# Fixed class order: index 0/1 maps to the model's two-output softmax head.
+CLASS_NAMES = ["fire", "nonfire"]
 NUM_CLASSES = len(CLASS_NAMES)
 
 
@@ -52,6 +52,8 @@ def _get_aerial_split_files(data_dir, split):
             if row.get("split") != split or row.get("is_aerial", "").lower() != "true":
                 continue
             class_name = row.get("class")
+            if class_name == "smoke":
+                continue
             if class_name not in CLASS_NAMES:
                 raise ValueError(
                     f"Unknown class {class_name!r} in manifest '{manifest_path}'."
@@ -70,13 +72,33 @@ def _get_aerial_split_files(data_dir, split):
     return split_files
 
 
-def _load_manifest_image(path, label):
+def _load_image(path, label):
     image = tf.io.read_file(path)
     image = tf.io.decode_image(image, channels=3, expand_animations=False)
     image.set_shape((None, None, 3))
     image = tf.image.resize(image, IMG_SIZE)
     label = tf.one_hot(label, NUM_CLASSES)
     return image, label
+
+
+def _get_split_files(data_dir, split):
+    split_dir = _resolve_split_directory(data_dir, split)
+    split_files = []
+    for class_index, class_name in enumerate(CLASS_NAMES):
+        class_dir = split_dir / class_name
+        if not class_dir.is_dir():
+            raise FileNotFoundError(
+                f"'{split}' class directory not found: {class_dir}"
+            )
+        split_files.extend(
+            (os.fspath(image_path), class_index)
+            for image_path in class_dir.rglob("*")
+            if image_path.is_file()
+            and image_path.suffix.lower() in IMAGE_EXTENSIONS
+        )
+    if not split_files:
+        raise ValueError(f"No fire/nonfire images found for split '{split}'.")
+    return split_files
 
 
 def get_class_weights(data_dir, aerial_only=False):
@@ -101,19 +123,11 @@ def get_class_weights(data_dir, aerial_only=False):
         }
         return class_counts, class_weights
 
-    train_dir = _resolve_split_directory(data_dir, "train")
+    train_files = _get_split_files(data_dir, "train")
     class_counts = {}
     for class_index, class_name in enumerate(CLASS_NAMES):
-        class_dir = train_dir / class_name
-        if not class_dir.is_dir():
-            raise FileNotFoundError(
-                f"Training class directory not found: {class_dir}"
-            )
         count = sum(
-            1
-            for image_path in class_dir.rglob("*")
-            if image_path.is_file()
-            and image_path.suffix.lower() in IMAGE_EXTENSIONS
+            label == class_index for _, label in train_files
         )
         if count == 0:
             raise ValueError(f"No training images found for class '{class_name}'.")
@@ -146,20 +160,16 @@ def load_dataset(
         ds = tf.data.Dataset.from_tensor_slices((list(paths), list(labels)))
         if shuffle:
             ds = ds.shuffle(len(paths), seed=42, reshuffle_each_iteration=True)
-        ds = ds.map(_load_manifest_image, num_parallel_calls=AUTOTUNE)
+        ds = ds.map(_load_image, num_parallel_calls=AUTOTUNE)
         ds = ds.batch(batch_size)
     else:
-        directory_path = _resolve_split_directory(data_dir, split)
-        ds = tf.keras.utils.image_dataset_from_directory(
-            os.fspath(directory_path),
-            labels="inferred",
-            label_mode="categorical",
-            class_names=CLASS_NAMES,
-            image_size=IMG_SIZE,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            seed=42,
-        )
+        split_files = _get_split_files(data_dir, split)
+        paths, labels = zip(*split_files)
+        ds = tf.data.Dataset.from_tensor_slices((list(paths), list(labels)))
+        if shuffle:
+            ds = ds.shuffle(len(paths), seed=42, reshuffle_each_iteration=True)
+        ds = ds.map(_load_image, num_parallel_calls=AUTOTUNE)
+        ds = ds.batch(batch_size)
 
     if augment:
         ds = ds.map(_augment, num_parallel_calls=AUTOTUNE)

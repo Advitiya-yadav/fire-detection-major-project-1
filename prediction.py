@@ -57,8 +57,7 @@ def calibrate_fire_threshold(labels, probabilities, max_false_positive_rate):
     negative_scores = probabilities[labels != FIRE_CLASS_INDEX, FIRE_CLASS_INDEX]
     if not len(negative_scores):
         raise ValueError(
-            "Cannot calibrate the fire threshold without non-fire or smoke "
-            "validation images."
+            "Cannot calibrate the fire threshold without nonfire validation images."
         )
 
     allowed_false_positives = int(

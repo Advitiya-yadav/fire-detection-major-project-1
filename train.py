@@ -88,7 +88,7 @@ def main():
         type=float,
         default=0.01,
         help=(
-            "Maximum fire false-positive rate on nonfire/smoke validation "
+            "Maximum fire false-positive rate on nonfire validation "
             "images when calibrating the fire decision threshold."
         ),
     )
@@ -240,7 +240,7 @@ def main():
         validation_fire_fpr,
     )
     print(
-        "\nFire decision threshold calibrated on validation nonfire/smoke "
+        "\nFire decision threshold calibrated on validation nonfire "
         f"images: {fire_threshold:.4f} "
         f"(false-positive rate {validation_fire_fpr:.2%}; "
         f"target <= {args.max_fire_fpr:.2%})"

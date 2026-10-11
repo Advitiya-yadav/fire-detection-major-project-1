@@ -1,48 +1,61 @@
 # Fire Detection from Aerial Images
 
-A three-class image classifier for identifying **fire**, **smoke**, or **nonfire** in aerial images. The project is inspired by the paper *Toward Intelligent Earth Observation: Hierarchical Feature Fusion and a Drone Dataset* by Danish et al.
+Binary aerial-image classification: **Fire** or **Non-fire**. The architecture follows the workflow diagram supplied for the IEEE paper *Toward Intelligent Earth Observation: Hierarchical Feature Fusion and a Drone Dataset* by Danish et al.
 
 ## Live demo
 
-Try the deployed Streamlit app: **[Open Fire Detection](https://advitiya-yadav-fire-detection-major-project-1-app-o7qwaz.streamlit.app/)**
+[Open the Streamlit fire-detection app](https://advitiya-yadav-fire-detection-major-project-1-app-o7qwaz.streamlit.app/)
 
-## Model workflow
-
-The model uses EfficientNetB2 as its Discriminative Fire Feature (DFF) backbone. The resulting features pass through two parallel branches—Fire-Guided Attention (FGA) and Hierarchical Feature Fusion (HFF). Their outputs are concatenated and passed to a classifier.
+## Workflow
 
 ```text
-                         ┌── FGA ──┐
-Input image → DFF ───────┤         ├→ Concatenate → Classifier → nonfire / fire / smoke
-                         └── HFF ──┘
+66 online video sources
+          ↓
+Frame preprocessing, curation, resize to 224 × 224
+          ↓
+DFF — EfficientNetB2 fire-specific feature maps
+          ↓
+    ┌───────────────┴────────────────┐
+    ↓                                ↓
+FGA module                     Direct branch
+7×7, 5×5, 3×3 attention       1×1 convolution
+    └───────────────┬────────────────┘
+                    ↓
+          HFF hierarchical fusion
+                    ↓
+       BatchNorm → Global pooling
+                    ↓
+             FC(2) → Softmax
+                    ↓
+             Fire / Non-fire
 ```
 
-**FGA and HFF are parallel branches in this implementation; FGA does not feed into HFF.** This project is paper-inspired and should not be considered an exact reproduction of the paper.
+The DFF feature maps split into parallel **FGA** and **direct 1×1-convolution** paths. Both paths feed into **HFF**, which fuses them before classification. Smoke is not a separate output class and is excluded from training; the classifier returns only **Fire** or **Non-fire**.
+
+The repository uses an already-cleaned, manually organized dataset. It does not implement video collection or frame extraction; the 66-source collection and frame preprocessing boxes describe the upstream workflow shown in the supplied diagram.
 
 ## Dataset layout
 
-Organize the cleaned dataset into `train`, `val`, and `test` splits. Each split should contain one directory per class:
+Provide `train`, `val`, and `test` splits with `fire` and `nonfire` class folders:
 
 ```text
 dataset/
 ├── train/
-│   ├── nonfire/
 │   ├── fire/
-│   └── smoke/
+│   └── nonfire/
 ├── val/
-│   ├── nonfire/
 │   ├── fire/
-│   └── smoke/
+│   └── nonfire/
 └── test/
-    ├── nonfire/
     ├── fire/
-    └── smoke/
+    └── nonfire/
 ```
 
-The project does not require a dataset-merging step. Images are resized to 224 × 224 during loading. Training can apply random horizontal flips, brightness changes, and contrast changes.
+Any `smoke` folders are ignored by the data loader. No dataset-merging step is required. Images are resized to 224 × 224. Training augmentation includes random horizontal flips, brightness, and contrast changes.
 
-## Setup on Windows
+## Setup (Windows / Python 3.12)
 
-The project uses Python 3.12. From PowerShell, open the project directory and create/activate a virtual environment:
+From PowerShell in the project directory:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -50,59 +63,45 @@ py -3.12 -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-If PowerShell blocks activation, run commands using the environment's Python executable instead:
+Run commands without activating the environment by using `.\.venv\Scripts\python.exe` instead of `python`.
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-## Train the model
-
-Train using the path to your dataset root:
+## Train
 
 ```powershell
 python train.py --data-dir "C:\path\to\dataset"
 ```
 
-Or, without activating the environment:
+The best checkpoint is saved to `training_output\best_model.keras` by default. Retrain after changing the architecture; weights from the former three-class model are incompatible with this binary model.
 
-```powershell
-.\.venv\Scripts\python.exe train.py --data-dir "C:\path\to\dataset"
-```
+## Predict
 
-The best checkpoint is saved to `training_output\best_model.keras` by default. Training can take a while depending on your hardware and dataset size.
-
-**Retrain after changing the model architecture.** Weights trained for a previous architecture may not fit the updated model.
-
-## Run predictions
-
-Classify one image from the command line:
+Classify one image:
 
 ```powershell
 python infer.py "C:\path\to\image.jpg"
 ```
 
-Start the Streamlit app locally:
+Run the local web interface:
 
 ```powershell
 streamlit run app.py
 ```
 
-Inference uses the local model in `training_output` when available; otherwise, the app is configured to download a model from Hugging Face. The app reports class scores and may report an uncertain prediction when a confidence threshold is not met.
+The app uses a local checkpoint when available; otherwise, it downloads the configured model from Hugging Face.
 
-## Deployment updates
+## Deployment
 
-The live demo is hosted on Streamlit and connected to this GitHub repository. When you push to the repository's deployment branch, Streamlit Cloud is generally configured to rebuild and redeploy the app automatically. Check the app's Streamlit dashboard to confirm the selected repository, branch, and deployment status.
+The Streamlit app is connected to this GitHub repository. A push to the branch selected in Streamlit Cloud normally triggers a rebuild/redeploy; check the Streamlit dashboard for the configured branch and deployment status.
 
-**Pushing code does not necessarily update the model weights.** `training_output` is excluded from Git, so a newly trained local checkpoint is not uploaded by a normal code push. The deployed app uses a model available in its deployment environment or downloads the configured Hugging Face model. To deploy retrained weights, update the model artifact at its configured source and ensure it matches the code's architecture.
+Model weights are separate from code: `training_output` is gitignored. To deploy this updated binary architecture, train a compatible two-class model and update the model artifact at the configured Hugging Face source. A code push alone will not replace the hosted model, and the existing three-class hosted checkpoint is not compatible with this app.
 
-## Project files
+## Main files
 
 | File | Purpose |
 | --- | --- |
-| `model.py` | DFF backbone, FGA and HFF branches, and classifier |
-| `data_pipeline.py` | Dataset loading, preprocessing, and training augmentation |
-| `train.py` | Training, fine-tuning, evaluation, and checkpoint saving |
-| `infer.py` | Command-line image prediction |
+| `model.py` | DFF backbone, FGA/direct branches, HFF fusion, and binary classifier |
+| `data_pipeline.py` | Fire/nonfire data loading and preprocessing |
+| `train.py` | Model training, fine-tuning, evaluation, and checkpoint saving |
+| `infer.py` | Command-line prediction |
 | `app.py` | Streamlit web application |
 | `prediction.py` | Shared preprocessing and prediction utilities |

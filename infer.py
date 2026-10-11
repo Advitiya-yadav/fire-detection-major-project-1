@@ -1,4 +1,4 @@
-"""Predict fire, nonfire, or smoke for one image."""
+"""Predict fire or nonfire for one image."""
 
 import argparse
 from pathlib import Path
